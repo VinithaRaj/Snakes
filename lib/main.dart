@@ -1,4 +1,4 @@
-// @dart = 2.9
+// @dart = 2.15
 import 'dart:convert';
 import 'dart:ui';
 import 'package:bordered_text/bordered_text.dart';
