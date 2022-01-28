@@ -5,9 +5,11 @@ class FirebaseFile {
   final String name;
   final String url;
 
+
   const FirebaseFile({
     required this.ref,
     required this.name,
     required this.url,
+
   });
 }

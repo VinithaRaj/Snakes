@@ -1,9 +1,12 @@
 // @dart = 2.15
 import 'dart:convert';
 import 'dart:ui';
+import 'dart:async';
+import 'package:async/async.dart';
+import 'package:flat_icons_flutter/flat_icons_flutter.dart';
 import 'package:bordered_text/bordered_text.dart';
 import 'package:recase/recase.dart';
-
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:animated_splash_screen/animated_splash_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -28,6 +31,8 @@ import 'dart:math' as math;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'IndPage.dart';
+import 'model/carousel_file.dart';
+import 'model/collections_file.dart';
 Future main() async{
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
@@ -45,6 +50,7 @@ class MyApp extends StatelessWidget {
     ));
     return MaterialApp(
       title: 'Flutter Demo',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         //primarySwatch: Colors.amber,
 
@@ -78,6 +84,9 @@ class MyBasePage extends StatefulWidget {
 }
 
 class _MyBasePageState extends State<MyBasePage> {
+  final FirebaseMessaging firebaseMessaging = FirebaseMessaging.instance;
+  final _firestore = FirebaseFirestore.instance;
+  final key2 = GlobalKey<ScaffoldState>();
   var storage = FirebaseStorage.instance;
   final ref = FirebaseStorage.instance.ref().child('testimage');
 // no need of the file extension, the name will do fine.
@@ -95,6 +104,50 @@ class _MyBasePageState extends State<MyBasePage> {
   int _selectedIndex = 0;
   late Future<List<FirebaseFile>> futureFiles;
   final FirebaseFirestore fb = FirebaseFirestore.instance;
+  @override
+  void initState() {
+    super.initState();
+    FirebaseMessaging.onMessageOpenedApp.listen((message) {
+      print('onMessageOpenedApp data: ${message.data}');
+    });
+    FirebaseMessaging.instance.getInitialMessage().then(( message) {
+      print('getInitialMessage data: ${message?.data}');
+
+    });
+
+    // onMessage: When the app is open and it receives a push notification
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print("onMessage data: ${message.data}");
+    });
+    firebaseMessaging.getToken().then((token) {
+      saveTokens(token);
+      
+    });
+      /*FirebaseMessaging.instance.getInitialMessage().then(( message) {
+        print('getInitialMessage data: ${message?.data}');
+
+      });
+
+      // onMessage: When the app is open and it receives a push notification
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        print("onMessage data: ${message.data}");
+      });
+
+    });*/
+  }
+  Future<void> saveTokens(var token) async {
+    try {
+      var qtoken = await _firestore.collection('tokens').where("token", isEqualTo: token).get();
+      if (qtoken.docs.length == 0){
+        await _firestore.collection('tokens').add({
+          'token': token,
+        });
+      }
+
+    } catch (e) {
+      print(e);
+    }
+  }
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -108,6 +161,7 @@ class _MyBasePageState extends State<MyBasePage> {
   ];
   @override
   Widget build(BuildContext context) => Scaffold(
+    key: key2,
   backgroundColor: Colors.black,
   body:_children[_selectedIndex],
     bottomNavigationBar: BottomNavigationBar(
@@ -151,15 +205,21 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  late Stream slides;
   var storage = FirebaseStorage.instance;
   late List<AssetImage> listOfImages;
   bool clicked = false;
+  late Future _getTaskAsync;
   List<String?> listOfStr = [];
   String? images;
   bool isLoading = false;
-  int _currentIndex=0;
+  int currentPage=0;
+  late AsyncMemoizer _memoizer;
   int _selectedIndex = 0;
+  final PageController ctrl = PageController();
   late Future<List<FirebaseFile>> futureFiles;
+  late Future<List<CarouselFile>> futureCars;
+  late Future<List<CollectionsFile>> futureCol;
   late Future<String> bannerlink;
   final FirebaseFirestore fb = FirebaseFirestore.instance;
   //String bannerurl = 'https://images.theconversation.com/files/416907/original/file-20210819-13-vseajg.jpg?ixlib=rb-1.1.0&rect=0%2C0%2C1191%2C797&q=45&auto=format&w=926&fit=clip';
@@ -168,34 +228,93 @@ class _MyHomePageState extends State<MyHomePage> {
       _selectedIndex = index;
     });
   }
+  double pageOffset =0;
   @override
   void initState(){
+
     super.initState();
-    futureFiles = FirebaseApi.listAll('newfiles/');
+    futureFiles = FirebaseApi.listAll('newsitems/');
+    futureCars = getCarouselList();
+    futureCol = getCollectionList();
     bannerlink = FirebaseStorage.instance.ref().child("Choose Banner/banner.jpg").getDownloadURL();
     getImages();
+
 
   }
 
 
+  Future<List<CollectionsFile>> getCollectionList() async {
+    List<int> idList = [];
+    var qa = await FirebaseFirestore.instance.collection("newfiles").limit(3).get();
+    List<CollectionsFile> collectionsList = [];
+    print("okayyyyy");
+    qa.docs.forEach((element) {
+
+      print(element.get("visibleName"));
+      //print((element as Map)["url"]);
+      print("nope");
+      var prod = CollectionsFile(
+        url: element.get("url"),
+        visibleName: element.get("visibleName"), type: element.get("type")
+      );
+      collectionsList.add(prod);
+    });
+    print(collectionsList);
+    print("SUCCESSFUL");
+    return collectionsList;
+  }
+  Future<List<CarouselFile>> getCarouselList() async {
+    List<int> idList = [];
+    var qa = await FirebaseFirestore.instance.collection("newsitems").get();
+    List<CarouselFile> carouselList = [];
+    print("okayyyyy");
+    qa.docs.forEach((element) {
+
+      print(element.get("url"));
+      //print((element as Map)["url"]);
+      print("nope");
+      var prod = CarouselFile(
+        url: element.get("url"),
+        newsTitle: element.get("newsTitle"), newsBig: element.get("newsBig"), newsSmall: element.get("newsSmall"),
+      );
+      carouselList.add(prod);
+    });
+    print(carouselList);
+    print("SUCCESSFUL");
+    return carouselList;
+}
   Future<String> _getbanner() async{
     final ref = FirebaseStorage.instance.ref().child("Choose Banner/banner.jpg");
 // no need of the file extension, the name will do fine.
     var url = await ref.getDownloadURL();
     return url;
   }
+  Future<QuerySnapshot>  getCarouselItems() async{
+    //return this._memoizer.runOnce(() async{
+      //await Future.delayed(Duration(seconds:2));
+    Future<QuerySnapshot> qa = fb.collection("newsitems").get();
+    //return fb2.collection("newfiles").get();
+    //return qa;
+    return qa;
+  //});
+  }
+
 
   void getImages(){
     listOfImages = [];
     listOfImages.add(AssetImage('snake.png'));
   }
+
+
   @override
   Widget build(BuildContext context) => Scaffold(
       backgroundColor: Colors.black,
       body: NestedScrollView(
-      body: FutureBuilder<List<FirebaseFile>>(
-        future: futureFiles,
-        builder: (context,snapshot){
+      body: //FutureBuilder<List<FirebaseFile>>(
+      /*FutureBuilder(
+        future: //futureFiles,
+        getCarouselItems(),
+        builder: (context, AsyncSnapshot<QuerySnapshot> snapshot){
           switch (snapshot.connectionState){
             case ConnectionState.waiting:
               return Center(child: CircularProgressIndicator());
@@ -204,20 +323,134 @@ class _MyHomePageState extends State<MyHomePage> {
                 return Center(child: Text("eroorrr"));
               } else {
                 final files = snapshot.data!;
-                return ListView(children: [Column(
+                return*/
+                  ListView(children: [Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     //buildHeader(0),
-                    const SizedBox(height: 12),
 
+
+
+                    /*Container(
+                        padding:EdgeInsets.all(10.0),
+                        child:
+                            Row(children:<Widget>[
+                              Text(
+                                  "News",
+                                  style: 
+                                  //GoogleFonts.teko(textStyle: 
+                                    TextStyle(fontSize: 20,color: Colors.white, letterSpacing: 1.0, fontWeight: FontWeight.bold),
+                                  //)
+                              ),
+                              Icon(Icons.local_fire_department_outlined, size: 20,color: Colors.amber),
+
+
+
+                            ],)
+
+                      ),*/
+
+                   Container(child:FutureBuilder<List<CarouselFile>>(
+                        future: futureCars,
+                        builder: (context, snapshot){
+                          switch (snapshot.connectionState){
+                            case ConnectionState.waiting:
+                              return Center(child: CircularProgressIndicator());
+                            default:
+                              if (snapshot.hasError){
+                                print("Errorrrr");
+                                return Center(child: Text("eroorrr"));
+                              } else {
+                                print("Goodddd");
+                                final files = snapshot.data!;
+                                // final files = snapshot.data?.asMa;
+                                return CarouselSlider.builder(
+                                    itemCount: files.length,
+                                    itemBuilder: ( context,  index) {
+                                      final file = files[index];
+                                      //var a =snapshot.data?.docs[index].data() ?? {"newsTitle":"hi","url":"none","newsBig":"none","newsSmall":"none"};
+                                      return Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.black,
+                                        ),
+                                        child: Stack(
+                                          //mainAxisAlignment: MainAxisAlignment.center,
+                                          children: <Widget>[
+                                            Image.network(
+                                              //(a as Map)["url"]??"https://firebasestorage.googleapis.com/v0/b/fbexample-f0c85.appspot.com/o/newsitems%2Fimage_picker3695461532645765370.jpg?alt=media&token=fcd85532-be0d-4689-8000-b56054853af3",
+                                              //height: MediaQuery.of(context).size.height*0.25,
+                                              file.url,
+                                              width: MediaQuery.of(context).size.width,
+                                              height:200,
+                                              //width:200,
+                                              fit: BoxFit.fitWidth,
+                                            ),
+                                            Positioned(child: Container(
+                                    width: MediaQuery.of(context).size.width,
+                                    padding: EdgeInsets.all(15),
+                                    color:Colors.black45,
+                                    child:Text(ReCase(file.newsTitle).titleCase,style:
+                                    GoogleFonts.ubuntu(
+                                    textStyle:
+                                    TextStyle(color: Colors.white, fontWeight: FontWeight.bold,fontSize: 18)
+                                    )
+                                    )
+
+                                ),
+                                  //left:40,
+
+                                ),
+                                        Positioned(child: ElevatedButton(
+
+                                          onPressed: () {
+                                            Navigator.push(
+                                              context,
+                                              MaterialPageRoute(builder: (context) => IndividualPageNews(fileurl: file.url,collname: "newsitems",)),
+                                            );
+                                          },
+                                          style: ElevatedButton.styleFrom(
+                                            primary: Colors.black,
+                                          ),
+                                          child: const Text('View'),
+
+                                        ),
+                                        bottom: 15,
+                                        right: 15,),
+
+
+
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                    options: CarouselOptions(
+                                      height: 200.0,
+                                      autoPlay: true,
+                                      autoPlayInterval: Duration(seconds: 3),
+                                      autoPlayAnimationDuration: Duration(milliseconds: 800),
+                                      autoPlayCurve: Curves.fastOutSlowIn,
+                                      pauseAutoPlayOnTouch: true,
+                                      aspectRatio: 2.0,
+                                      onPageChanged: (index, reason) {
+                                        setState(() {
+                                          currentPage = index;
+                                        });
+                                      },
+                                    )
+                                )
+                                ;
+                              }}}
+                    )),
+                    const SizedBox(height: 12),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         Card(
-                          color: Colors.black,
+                            color: Colors.black,
                             shadowColor: Colors.amber,
-                            child: Padding(
-                                padding: EdgeInsets.all(3.0),
+                            child: /*Padding(
+                                padding: EdgeInsets.all(3.0),*/
+                            Expanded(
                                 child:Column(
                                   children: [
                                     Icon(Icons.accessibility_new_rounded, color: Colors.white),
@@ -239,8 +472,9 @@ class _MyHomePageState extends State<MyHomePage> {
                         Card(
                             color: Colors.black,
                             shadowColor: Colors.amber,
-                            child: Padding(
-                                padding: EdgeInsets.all(3.0),
+                            child: /*Padding(
+                                padding: EdgeInsets.all(3.0),*/
+                            Expanded(
                                 child:Column(
                                   children: [
                                     Icon(MyFlutterApp.snake, color: Colors.white,),
@@ -260,9 +494,10 @@ class _MyHomePageState extends State<MyHomePage> {
                         Card(
                             color: Colors.black,
                             shadowColor: Colors.amber,
-                            child: Padding(
-
-                                padding: EdgeInsets.all(3.0),
+                            child:
+                            Expanded(
+                            /*Padding(
+                                padding: EdgeInsets.all(3.0),*/
                                 child:Column(
                                   children: [
                                     Icon(Icons.call_rounded, color: Colors.white),
@@ -281,43 +516,84 @@ class _MyHomePageState extends State<MyHomePage> {
                         ),
                       ],
                     ),
+
                     Container(
-                        padding:EdgeInsets.all(6.0),
+                        padding:EdgeInsets.all(30.0),
                         child:
-                            Row(children:<Widget>[
-                              Text(
-                                  "P o p u l a r ",
-                                  style: GoogleFonts.teko(
-                                    textStyle: TextStyle(fontSize: 20,color: Colors.white, letterSpacing: 1.0, fontWeight: FontWeight.bold),
-                                  )),
-                              Icon(Icons.local_fire_department_outlined, size: 20,color: Colors.amber),
+                        Row(children:<Widget>[
+                          Text(
+                              "New ",
+                              style:
+                              //GoogleFonts.teko(
+                            //    textStyle:
+                                TextStyle(fontSize: 20,color: Colors.white, letterSpacing: 1.0, fontWeight: FontWeight.bold),
+                          //    )
+                          ),
+                          Icon(Icons.local_fire_department_outlined, size: 20,color: Colors.amber),
+                          TextButton(onPressed: () {Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => CollectionsPage()),
+                          );  }, child: Text("More"))
 
 
-                            ],)
+                        ],)
 
-                      ),
-
-                    CarouselSlider.builder(
-                        itemCount: files.length,
-                        itemBuilder: (context, index) {
-                          final file = files[index];
-                          return buildCard(context, file);
-                        },
-                        options: CarouselOptions(
-                          height: 200.0,
-                          autoPlay: true,
-                          autoPlayInterval: Duration(seconds: 3),
-                          autoPlayAnimationDuration: Duration(milliseconds: 800),
-                          autoPlayCurve: Curves.fastOutSlowIn,
-                          pauseAutoPlayOnTouch: true,
-                          aspectRatio: 2.0,
-                          onPageChanged: (index, reason) {
-                            setState(() {
-                              _currentIndex = index;
-                            });
-                          },
-                        )
                     ),
+                          Container(child:FutureBuilder<List<CollectionsFile>>(
+                            future: futureCol,
+                            builder: (context,  snapshot) {
+                              if (snapshot.connectionState == ConnectionState.done) {
+                                final files = snapshot.data!;
+                                print("hereee");
+                                return ListView.builder(
+                                    physics: const NeverScrollableScrollPhysics(),
+                                    shrinkWrap: true,
+                                    itemCount: files.length,
+                                    itemBuilder: ( context,  index) {
+                                      final file =files[index];
+                                      return
+                                        ListTile(
+                                          contentPadding: EdgeInsets.symmetric(vertical: 20,horizontal: 20),
+                                          leading: ConstrainedBox(
+                                              constraints: BoxConstraints(
+                                                minWidth: 44,
+                                                minHeight: 44,
+                                                maxWidth: 64,
+                                                maxHeight: 64,
+                                              ),
+                                              child: Image.network(file.url)),
+
+                                          title: Text(ReCase(file.visibleName).titleCase,style: GoogleFonts.teko(
+                                            textStyle: TextStyle(fontSize: 20,color: Colors.white, letterSpacing: 1.0, fontWeight: FontWeight.bold),
+                                          )),
+                                          subtitle: Text(file.type,style: GoogleFonts.teko(
+                                            textStyle: TextStyle(fontSize: 14,color: Colors.white, letterSpacing: 1.0),
+                                          )),
+                                          trailing: TextButton(
+                                            child: Text('View'),
+                                            onPressed: () {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(builder: (context) => IndividualPage(fileurl: file.url,collname: "newfiles")),
+                                              );
+                                            },
+                                          )
+
+                                        )
+                                      ;
+
+                                    });
+                              } else if (snapshot.connectionState == ConnectionState.none) {
+                                return Text("No data");
+                              }
+                              return Text("");
+                            },
+
+                          ))
+
+
+                      ,
+
 
                     Container(
                       padding: EdgeInsets.all(6),
@@ -355,17 +631,20 @@ class _MyHomePageState extends State<MyHomePage> {
 
 
                     ),
+
                   ],
-                  )]);
-              }
-          }
-        }
-      ),
+                  )])
+          //;
+              //}
+          //}
+       // }
+      //)
+        , //futurebuilder
         headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
 
           return <Widget>[
           SliverAppBar(
-            backgroundColor: Colors.amber,
+            backgroundColor: Colors.black,
             expandedHeight: 250.0,
             floating: false,
             pinned: true,
@@ -544,6 +823,11 @@ class _MyHomePageState extends State<MyHomePage> {
 
     return m;
   }
+  Future<QuerySnapshot> getImages3(String fileurlfirebase) {
+    //return fb.collection("newfiles").where("url", isEqualTo:widget.fileurl).get();
+    return fb.collection("newsitems").where("url", isEqualTo:fileurlfirebase).get();
+  }
+  //final FirebaseFirestore fb3 = FirebaseFirestore.instance;
   Widget buildCard(BuildContext context, FirebaseFile file) =>  Container(
     decoration: BoxDecoration(
       color: Colors.black,
@@ -559,18 +843,58 @@ class _MyHomePageState extends State<MyHomePage> {
         //width:200,
         fit: BoxFit.fitWidth,
       ),
+      Positioned(child: Container(
+
+        width: MediaQuery.of(context).size.width,
+        padding: EdgeInsets.all(10),
+        color:Colors.amber,
+
+        child:
+        FutureBuilder(
+          future: getImages3(file.url),
+          builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
+            if (snapshot.connectionState == ConnectionState.done) {
+              return ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: snapshot.data?.docs.length,
+                  itemBuilder: (BuildContext context, int index) {
+                    var a =snapshot.data?.docs[index].data() ?? {"newsTitle":"hi","url":"none","newsBig":"none","newsSmall":"none"};
+                    return Text((a as Map)["newsTitle"],style: TextStyle(fontWeight: FontWeight.bold,color: Colors.black))
+                      ;
+
+                  });
+            } else if (snapshot.connectionState == ConnectionState.none) {
+              return Text("No data");
+            }
+            return Text("");
+          },
+
+        )
+        //Text(file.name,style: TextStyle(fontWeight: FontWeight.bold,color: Colors.black))
+        /*GoogleFonts.teko(
+          textStyle: TextStyle(color: Colors.black, letterSpacing: 1.0, fontWeight: FontWeight.bold,height: .4),),*/
+
+
+      ),
+      left:40,
+
+          ),
       Positioned(child: ElevatedButton(
 
         onPressed: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => IndividualPage(fileurl: file.url,collname: "newfiles",)),
+            MaterialPageRoute(builder: (context) => IndividualPage(fileurl: file.url,collname: "newsitems",)),
           );
         },
+          style: ElevatedButton.styleFrom(
+              primary: Colors.black,
+              ),
         child: const Text('View'),
 
       ),
-      bottom: 15,
+
+      bottom: 0,
       right:15)
 
     ],
@@ -611,7 +935,7 @@ class _Aboutuspage extends State<Aboutuspage>{
         headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
           return <Widget>[
             SliverAppBar(
-              backgroundColor: Colors.amber,
+              backgroundColor: Colors.black,
               expandedHeight: 100.0,
               floating: false,
               pinned: true,
@@ -648,7 +972,7 @@ class _Aboutuspage extends State<Aboutuspage>{
                     title: Text('Who Are We',style: GoogleFonts.teko(
                       textStyle: TextStyle(fontSize: 20,color: Colors.white, letterSpacing: 1.0, fontWeight: FontWeight.bold),
                     )),
-                    subtitle: Text('Contrary to popular belief, Lorem Ipsum is not simply random text. ',style: TextStyle(color: Colors.white),),
+                    subtitle: Text('3 friends who came together through a mutual passion for the exotic animal world. ',style: TextStyle(color: Colors.white),),
                   ),
 
                 ],
@@ -667,7 +991,7 @@ class _Aboutuspage extends State<Aboutuspage>{
                     title: Text('Mission',style: GoogleFonts.teko(
                       textStyle: TextStyle(fontSize: 20,color: Colors.white, letterSpacing: 1.0, fontWeight: FontWeight.bold),
                     )),
-                    subtitle: Text('Contrary to popular belief, Lorem Ipsum is not simply random text. ',style: TextStyle(color: Colors.white),),
+                    subtitle: Text('To spread the passion that is the world of exotic animals and educate the public on the beauty of these creatures.',style: TextStyle(color: Colors.white),),
                   ),
 
                 ],
@@ -686,7 +1010,7 @@ class _Aboutuspage extends State<Aboutuspage>{
                     title: Text('Vision',style: GoogleFonts.teko(
                       textStyle: TextStyle(fontSize: 20,color: Colors.white, letterSpacing: 1.0, fontWeight: FontWeight.bold),
                     )),
-                    subtitle: Text('Contrary to popular belief, Lorem Ipsum is not simply random text. ' ,style: TextStyle(color: Colors.white),
+                    subtitle: Text('To produce visually stunning and healthy animals. ' ,style: TextStyle(color: Colors.white),
                     ),
                   ),
 
@@ -716,7 +1040,6 @@ class _Aboutuspage extends State<Aboutuspage>{
                     TextSpan(text: '- Stable and feeding well!\n'),
                     TextSpan(text: '- Sexed properly\n'),
                     TextSpan(text: '- Excellent health condition prior to leaving our premises\n'),
-                    TextSpan(text: '-  A full Care Sheet will be provided on the relevant animal and customers can reach out to us for any further information.\n'),
                     TextSpan(text: '- A 2-week monitoring period is accompanied with the purchase of the animal to guarantee the health and quality of the animal. Any defect in the animal will be liable for a 1 to 1 exchange.\n'),
                     TextSpan(text: '- A full Care Sheet will be provided on the relevant animal and customers can reach out to us for any further information.\n'),
                     TextSpan(text: '- Products sold are non-refundable.\n'),
@@ -886,7 +1209,7 @@ class _Contactuspage extends State<Contactuspage>{
         headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
           return <Widget>[
             SliverAppBar(
-              backgroundColor: Colors.amber,
+              backgroundColor: Colors.black,
               expandedHeight: 100.0,
               floating: false,
               pinned: true,
@@ -1031,6 +1354,337 @@ class _Contactuspage extends State<Contactuspage>{
   }
 
 }
+
+class IndividualPageNews extends StatefulWidget{
+  final fileurl;
+  final collname;
+  //final user;
+  const IndividualPageNews({Key ? key, required this.fileurl,required this.collname}) : super(key:key);
+
+  @override
+  _IndividualPageNews createState() => new _IndividualPageNews();
+//List<QuerySnapshot> pics = (await fb2.collection("files").where("url",isEqualTo: fileurl).get()) as List<QuerySnapshot<Object?>>;
+
+}
+class _IndividualPageNews extends State<IndividualPageNews>{
+  //static const _url = 'whatsapp://send?phone=60133635145?text="hello"';
+
+  Future<QuerySnapshot> getImages() {
+    //return fb.collection("newfiles").where("url", isEqualTo:widget.fileurl).get();
+    return fb.collection(widget.collname).where("url", isEqualTo:widget.fileurl).get();
+  }
+  final FirebaseFirestore fb = FirebaseFirestore.instance;
+  TextEditingController _textFieldController = TextEditingController();
+  String valueText = "No desc";
+  String name = "Name";
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        // Here we take the value from the MyHomePage object that was created by
+        // the App.build method, and use it to set our appbar title.
+        //title: Text(),
+        backgroundColor: Colors.amber,
+      ),
+      body: Container(
+        padding: EdgeInsets.all(10.0),
+        child: FutureBuilder(
+          future: getImages(),
+          builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
+            if (snapshot.connectionState == ConnectionState.done) {
+              return ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: snapshot.data?.docs.length,
+                  itemBuilder: (BuildContext context, int index) {
+                    var a =snapshot.data?.docs[index].data() ?? {"newsTitle":"hi","url":"none","newsSmall":"none","newsBig":"none"};
+                    name = (a as Map)["newsTitle"];
+                    return Card(
+                      color: Colors.black,
+                      clipBehavior: Clip.antiAlias,
+                      child:
+                      Column(
+                        children: [
+                          ListTile(
+                            //leading: Icon(Icons.bolt,color: Colors.amber,),
+
+                            title: Text(ReCase((a as Map)["newsTitle"]).titleCase,style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold),),
+                            subtitle: Text(
+                              (a as Map)["newsSmall"],
+                              style: TextStyle(color: Colors.white,fontWeight: FontWeight.bold),
+                            ),
+                            //tileColor: Colors.black,
+
+                          ),
+                          Container(
+                            //color: Colors.black,
+                            height: 200.0,
+                            child: Image.network(
+                              //snapshot.data?.docs[index].data()!["url"],
+                                (a as Map)["url"],
+                                fit: BoxFit.fill),
+                          ),
+                          Container(
+                            //color: Colors.black,
+                            padding: EdgeInsets.all(16.0),
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              (a as Map)["newsBig"],
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ),
+
+                        ],
+                      ),
+                    );
+
+
+                  });
+            } else if (snapshot.connectionState == ConnectionState.none) {
+              return Text("No data");
+            }
+            return CircularProgressIndicator();
+          },
+
+        ),
+
+      ),
+
+
+    );
+
+  }
+
+}
+class SnakeCont extends StatefulWidget{
+  final dbtabname;
+  final searchname;
+  const SnakeCont({Key?key, required this.dbtabname, required this.searchname}):super(key:key);
+
+  @override
+  _SnakeCont createState() => new _SnakeCont();
+}
+class _SnakeCont extends State<SnakeCont>{
+  final FirebaseFirestore fb2 = FirebaseFirestore.instance;
+  Future<QuerySnapshot> getImages2dup(searchtext) {
+    var name = widget.dbtabname;
+    if (name=='Pythons'){
+      setState(()=>name='newfiles');
+    }
+    Future<QuerySnapshot> qa = fb2.collection(name).get();
+    //return fb2.collection("newfiles").get();
+    return qa;
+  }
+  @override
+  Widget build(BuildContext context) {
+    return Container( //snakes
+      child:
+      FutureBuilder(
+        //future: getImages2(_searchText),
+        future: getImages2dup(widget.searchname),
+        builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
+          if (snapshot.connectionState == ConnectionState.done) {
+            var snakecards = snapshot.data?.docs.map((doc) => Animalcard(
+              name: doc['visibleName'],
+              type: doc['type'],
+              url: doc['url'],
+              desc: doc['desc'],
+              colour: doc['colour'],
+            )).toList();
+            snakecards = snakecards?.where((element) => element.name.toLowerCase().contains(widget.searchname.toLowerCase())).toList();
+            return ListView.builder(
+                physics: NeverScrollableScrollPhysics(),
+                shrinkWrap: true,
+                //itemCount: snapshot.data?.docs.length,
+                itemCount: snakecards?.length,
+                itemBuilder: (BuildContext context, int index) {
+                  var a =snapshot.data?.docs[index].data() ?? {"name":"hi","url":"none","desc":"none"};
+                  return Card(
+                    clipBehavior: Clip.antiAlias,
+                    color: Colors.black,
+                    child:
+                    Column(
+                      children: [
+                        ListTile(
+                          leading: Icon(Icons.bolt,color: Colors.amber,),
+                          //title: Text("Name: "+ReCase((a as Map)["visibleName"]).titleCase,style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold)),
+                          title: Text("Name: "+ReCase(snakecards![index].name).titleCase,style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold)),
+                          subtitle: Text(
+                            //"Type: "+(a as Map)["type"],
+                            "Type: "+snakecards![index].type,
+                            style: TextStyle(color: Colors.white,fontWeight: FontWeight.bold),
+                          ),
+                          //trailing: Icon(Icons.favorite_outline),
+                        ),
+                        Container(
+                          height: 200.0,
+                          child: Image.network(
+                            //snapshot.data?.docs[index].data()!["url"],
+                            //(a as Map)["url"],
+                              snakecards![index].url,
+                              fit: BoxFit.fill),
+                        ),
+                        Container(
+                          padding: EdgeInsets.all(16.0),
+                          alignment: Alignment.centerLeft,
+                          //child: Text("Description: "+(a as Map)["desc"]),
+                          child: Text("Description: "+snakecards![index].desc),
+                        ),
+                        Stack(children: <Widget>[ListTile(
+                          title: Text("Price",style: TextStyle(color: Colors.white,fontWeight: FontWeight.bold)),
+                          //subtitle: Text((a as Map)["colour"],style: TextStyle(color: Colors.black,fontWeight: FontWeight.bold)),
+                          subtitle: Text(snakecards![index].colour,style: TextStyle(color: Colors.black,fontWeight: FontWeight.bold)),
+                          tileColor: Colors.amber,
+                        ),
+                          Positioned(
+                              child: TextButton(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    //MaterialPageRoute(builder: (context) => IndividualPage(fileurl:(a as Map)["url"],collname: "newfiles")),
+                                    MaterialPageRoute(builder: (context) => IndividualPage(fileurl:snakecards![index].url,collname: (widget.dbtabname!='Pythons')?widget.dbtabname:'newfiles')),
+                                  );
+                                },
+                                child: const Text('View',style: TextStyle(color: Colors.black)),
+                              ),
+                              bottom: 15,
+                              right:15)
+                        ])
+                      ],
+                    ),
+                  );
+                });
+          } else if (snapshot.connectionState == ConnectionState.none) {
+            return Text("No data");
+          }
+          /*return SizedBox(
+                        child: LinearProgressIndicator(),
+                        height: 5.0,
+                        width: 5.0,
+                      );*/
+          return Text("Loading...");
+        },
+
+      ),
+    );
+  }
+
+}
+class TabPage extends StatefulWidget{
+  final dbtabname;
+  final searchname;
+  const TabPage({Key?key, required this.dbtabname, required this.searchname}):super(key:key);
+  @override
+  _TabPage createState()=>new _TabPage();
+}
+class _TabPage extends State<TabPage>{
+  final FirebaseFirestore fb2 = FirebaseFirestore.instance;
+  Future<QuerySnapshot> getImages2dup(searchtext) {
+    Future<QuerySnapshot> qa = fb2.collection(widget.dbtabname).get();
+    //return fb2.collection("newfiles").get();
+    return qa;
+  }
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(child:Column(children:[
+      Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2.0,vertical: 8),
+          child:Text(widget.dbtabname,style:TextStyle(color: Colors.white, fontWeight: FontWeight.bold,fontSize: 24))),
+      Container( //snakes
+        child:
+        FutureBuilder(
+          //future: getImages2(_searchText),
+          future: getImages2dup(widget.searchname),
+          builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
+            if (snapshot.connectionState == ConnectionState.done) {
+              var snakecards = snapshot.data?.docs.map((doc) => Animalcard(
+                name: doc['visibleName'],
+                type: doc['type'],
+                url: doc['url'],
+                desc: doc['desc'],
+                colour: doc['colour'],
+              )).toList();
+              snakecards = snakecards?.where((element) => element.name.toLowerCase().contains(widget.searchname.toLowerCase())).toList();
+              return ListView.builder(
+                  physics: NeverScrollableScrollPhysics(),
+                  shrinkWrap: true,
+                  //itemCount: snapshot.data?.docs.length,
+                  itemCount: snakecards?.length,
+                  itemBuilder: (BuildContext context, int index) {
+                    var a =snapshot.data?.docs[index].data() ?? {"name":"hi","url":"none","desc":"none"};
+                    return Card(
+                      clipBehavior: Clip.antiAlias,
+                      color: Colors.black,
+                      child:
+                      Column(
+                        children: [
+                          ListTile(
+                            leading: Icon(Icons.bolt,color: Colors.amber,),
+                            //title: Text("Name: "+ReCase((a as Map)["visibleName"]).titleCase,style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold)),
+                            title: Text("Name: "+ReCase(snakecards![index].name).titleCase,style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold)),
+                            subtitle: Text(
+                              //"Type: "+(a as Map)["type"],
+                              "Type: "+snakecards![index].type,
+                              style: TextStyle(color: Colors.white,fontWeight: FontWeight.bold),
+                            ),
+                            //trailing: Icon(Icons.favorite_outline),
+                          ),
+                          Container(
+                            height: 200.0,
+                            child: Image.network(
+                              //snapshot.data?.docs[index].data()!["url"],
+                              //(a as Map)["url"],
+                                snakecards![index].url,
+                                fit: BoxFit.fill),
+                          ),
+                          Container(
+                            padding: EdgeInsets.all(16.0),
+                            alignment: Alignment.centerLeft,
+                            //child: Text("Description: "+(a as Map)["desc"]),
+                            child: Text("Description: "+snakecards![index].desc),
+                          ),
+                          Stack(children: <Widget>[ListTile(
+                            title: Text("Price",style: TextStyle(color: Colors.white,fontWeight: FontWeight.bold)),
+                            //subtitle: Text((a as Map)["colour"],style: TextStyle(color: Colors.black,fontWeight: FontWeight.bold)),
+                            subtitle: Text(snakecards![index].colour,style: TextStyle(color: Colors.black,fontWeight: FontWeight.bold)),
+                            tileColor: Colors.amber,
+                          ),
+                            Positioned(
+                                child: TextButton(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      //MaterialPageRoute(builder: (context) => IndividualPage(fileurl:(a as Map)["url"],collname: "newfiles")),
+                                      MaterialPageRoute(builder: (context) => IndividualPage(fileurl:snakecards![index].url,collname: (widget.dbtabname!='Pythons')?widget.dbtabname:'newfiles')),
+                                    );
+                                  },
+                                  child: const Text('View',style: TextStyle(color: Colors.black)),
+                                ),
+                                bottom: 15,
+                                right:15)
+                          ])
+                        ],
+                      ),
+                    );
+                  });
+            } else if (snapshot.connectionState == ConnectionState.none) {
+              return Text("No data");
+            }
+            /*return SizedBox(
+                        child: LinearProgressIndicator(),
+                        height: 5.0,
+                        width: 5.0,
+                      );*/
+            return Text("Loading...");
+          },
+
+        ),
+      )]));
+  }
+
+}
+
 class IndividualPage extends StatefulWidget{
   final fileurl;
   final collname;
@@ -1046,7 +1700,7 @@ class _IndividualPage extends State<IndividualPage>{
   //static const _url = 'whatsapp://send?phone=60133635145?text="hello"';
   static const String _url = 'whatsapp://send?phone=60133635145&text=hello';
   void _launchURL(String func) async => await canLaunch(_url)
-      ? await launch('whatsapp://send?phone=60133635145&text= ${func} On Product Name: ${name}') : throw 'Not found $_url';
+      ? await launch('whatsapp://send?phone=60133635145&text= ${func} On Product Name: ${ReCase(name).titleCase}') : throw 'Not found $_url';
 
 
   static const _actionTitles = ['Enquire on Product', 'Place Order'];
@@ -1064,7 +1718,7 @@ class _IndividualPage extends State<IndividualPage>{
       context: context,
       builder: (context) {
         return AlertDialog(
-          content: Text("Product Name: "+name),
+          content: Text("Product Name: "+ReCase(name).titleCase),
           actions: [
             TextButton(
               onPressed:()=> _launchURL(_actionTitles[index]),
@@ -1108,7 +1762,7 @@ class _IndividualPage extends State<IndividualPage>{
                           ListTile(
                             //leading: Icon(Icons.bolt,color: Colors.amber,),
 
-                            title: Text("Name: "+(a as Map)["visibleName"],style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold),),
+                            title: Text("Name: "+ReCase((a as Map)["visibleName"]).titleCase,style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold),),
                             subtitle: Text(
                               "Item Code: "+(a as Map)["code"],
                               style: TextStyle(color: Colors.white),
@@ -1440,12 +2094,17 @@ class _CollectionsPage extends State<CollectionsPage>{
   late bool _isSearching;
   String _searchText = "";
   List searchresult = [];
+  final List<String> snakepagelist = <String>['Pythons','Colubrids','Giant Snakes'];
+  String selectedItem = 'Pythons';
+  String selectedGroup = 'Pythons';
   Widget appBarTitle = new Text(
     "Search by Name",
     style: GoogleFonts.teko(
       textStyle: TextStyle(color: Colors.white, letterSpacing: 1.0,fontSize: 14, fontStyle: FontStyle.italic),
     ),
   );
+
+  String? value;
 
   void _onItemTapped(int index) {
     setState(() {
@@ -1457,8 +2116,19 @@ class _CollectionsPage extends State<CollectionsPage>{
     //return fb2.collection("newfiles").get();
     return qa;
   }
+  Future<QuerySnapshot> getImages2dup(searchtext) {
+    Future<QuerySnapshot> qa = fb2.collection("newfiles").get();
+    //return fb2.collection("newfiles").get();
+    return qa;
+  }
   Future<QuerySnapshot> getImages3(tabname,searchtext) {
     Future<QuerySnapshot> qa = fb2.collection(tabname).where("visibleName",isGreaterThanOrEqualTo: searchtext).where("visibleName",isLessThanOrEqualTo: searchtext+ '\uf8ff').get();
+    //return fb2.collection("newfiles").get();
+    return qa;
+    return fb2.collection(tabname).get();
+  }
+  Future<QuerySnapshot> getImages3dup(tabname,searchtext) {
+    Future<QuerySnapshot> qa = fb2.collection(tabname).get();
     //return fb2.collection("newfiles").get();
     return qa;
     return fb2.collection(tabname).get();
@@ -1526,7 +2196,7 @@ class _CollectionsPage extends State<CollectionsPage>{
         headerSliverBuilder: (BuildContext context, bool innerBoxIsScrolled) {
           return <Widget>[
             SliverAppBar(
-              backgroundColor: Colors.amber,
+              backgroundColor: Colors.black,
               expandedHeight: 100.0,
               floating: false,
               pinned: true,
@@ -1548,7 +2218,7 @@ class _CollectionsPage extends State<CollectionsPage>{
         },
       body:
       DefaultTabController(
-        length: 3,
+        length: 6,
         child: Scaffold(
           backgroundColor: Colors.black,
           appBar: PreferredSize(
@@ -1586,187 +2256,60 @@ class _CollectionsPage extends State<CollectionsPage>{
               bottom: TabBar(
               indicatorColor: Colors.amber,
               tabs: [
-                Tab(icon: Icon(MyFlutterApp.snake),text: "Snakes",),
-                Tab(icon: Icon(Icons.pest_control_rodent),text: "Others",),
-                Tab(icon: Icon(Icons.auto_awesome),text: "Accessories",),
+                Tab(icon: Icon(MyFlutterApp.snake,color: Colors.white,)),
+                Tab(icon: Image.asset("ims/curved-lizard.png")),
+                Tab(icon: Image.asset("ims/turtle.png")),
+                Tab(icon: Image.asset("ims/animal.png")),
+                Tab(icon: Icon(Icons.pest_control_rodent,color: Colors.white,)),
+                Tab(icon: Icon(Icons.auto_awesome,color: Colors.white,)),
               ],
             ),
             backgroundColor: Colors.black,
           )),
           body:
           TabBarView(
-
             children: [
-                Container( //snakes
+              SingleChildScrollView(child:Column(children:[
+                Container(
+                  margin: EdgeInsets.symmetric(horizontal: 6.0),
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
 
-            child:
-                  FutureBuilder(
+                    child:Center(child:DropdownButton<String>(
 
-                    future: getImages2(_searchText),
-                    builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
-                      if (snapshot.connectionState == ConnectionState.done) {
-                        return ListView.builder(
-
-                            shrinkWrap: true,
-                            itemCount: snapshot.data?.docs.length,
-                            itemBuilder: (BuildContext context, int index) {
-                              var a =snapshot.data?.docs[index].data() ?? {"name":"hi","url":"none","desc":"none"};
-
-                              return Card(
-                                clipBehavior: Clip.antiAlias,
-                                color: Colors.black,
-                                child:
-                                Column(
-                                  children: [
-                                    ListTile(
-                                      leading: Icon(Icons.bolt,color: Colors.amber,),
-                                      title: Text("Name: "+ReCase((a as Map)["visibleName"]).titleCase,style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold)),
-                                      subtitle: Text(
-                                        "Type: "+(a as Map)["type"],
-                                        style: TextStyle(color: Colors.white,fontWeight: FontWeight.bold),
-                                      ),
-                                      //trailing: Icon(Icons.favorite_outline),
-                                    ),
-                                    Container(
-                                      height: 200.0,
-                                      child: Image.network(
-                                        //snapshot.data?.docs[index].data()!["url"],
-                                          (a as Map)["url"],
-                                          fit: BoxFit.fill),
-                                    ),
-                                    Container(
-                                      padding: EdgeInsets.all(16.0),
-                                      alignment: Alignment.centerLeft,
-                                      child: Text("Description: "+(a as Map)["desc"]),
-                                    ),
-
-                                    Stack(children: <Widget>[ListTile(
-
-                                      title: Text("Price",style: TextStyle(color: Colors.black,fontWeight: FontWeight.bold)),
-                                      subtitle: Text((a as Map)["colour"],style: TextStyle(color: Colors.white)),
-                                      tileColor: Colors.amber,
-                                    ),
-                                      Positioned(
-                                          child: TextButton(
-                                            onPressed: () {
-                                              Navigator.push(
-                                                context,
-                                                MaterialPageRoute(builder: (context) => IndividualPage(fileurl:(a as Map)["url"],collname: "newfiles")),
-                                              );
-                                            },
-                                            child: const Text('View',style: TextStyle(color: Colors.black)),
-
-                                          ),
-                                          bottom: 15,
-                                          right:15)
-                                    ])
-
-                                  ],
-                                ),
-                              );
-                            });
-                      } else if (snapshot.connectionState == ConnectionState.none) {
-                        return Text("No data");
-                      }
-                      /*return SizedBox(
-                        child: LinearProgressIndicator(),
-                        height: 5.0,
-                        width: 5.0,
-                      );*/
-                      return Text("Loading...");
-                    },
-
-                  ),
-                    //]
-                //)
-          //)
-                )
-
-                //)
-
-              ,
-              Container(//Other Animals
-
-                padding: EdgeInsets.all(10.0),
-                child: FutureBuilder(
-                  future: getImages3("Other Animals",_searchText),
-                  builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
-                    if (snapshot.connectionState == ConnectionState.done) {
-                      return ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: snapshot.data?.docs.length,
-                          itemBuilder: (BuildContext context, int index) {
-                            var a =snapshot.data?.docs[index].data() ?? {"name":"hi","url":"none","desc":"none"};
-
-                            return Card(
-                              clipBehavior: Clip.antiAlias,
-                              color: Colors.black,
-                              child:
-                              Column(
-                                children: [
-                                  ListTile(
-                                    leading: Icon(Icons.bolt,color: Colors.amber,),
-                                    title: Text("Name: "+(a as Map)["visibleName"],style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold)),
-                                    subtitle: Text(
-                                      "Type: "+(a as Map)["type"],
-                                      style: TextStyle(color: Colors.white,fontWeight: FontWeight.bold),
-                                    ),
-                                    //trailing: Icon(Icons.favorite_outline),
-                                  ),
-                                  Container(
-                                    height: 200.0,
-                                    child: Image.network(
-                                      //snapshot.data?.docs[index].data()!["url"],
-                                        (a as Map)["url"],
-                                        fit: BoxFit.fill),
-                                  ),
-                                  Container(
-                                    padding: EdgeInsets.all(16.0),
-                                    alignment: Alignment.centerLeft,
-                                    child: Text("Description: "+(a as Map)["desc"]),
-                                  ),
-
-                                  Stack(children: <Widget>[ListTile(
-
-                                    title: Text("Price",style: TextStyle(color: Colors.black,fontWeight: FontWeight.bold)),
-                                    subtitle: Text((a as Map)["colour"],style: TextStyle(color: Colors.white)),
-                                    tileColor: Colors.amber,
-                                  ),
-                                    Positioned(
-                                        child: TextButton(
-                                          onPressed: () {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(builder: (context) => IndividualPage(fileurl:(a as Map)["url"],collname: "Other Animals")),
-                                            );
-                                          },
-                                          child: const Text('View',style: TextStyle(color: Colors.black)),
-
-                                        ),
-                                        bottom: 15,
-                                        right:15)
-                                  ])
-
-                                ],
-                              ),
-                            );
-                          });
-                    } else if (snapshot.connectionState == ConnectionState.none) {
-                      return Text("No data");
-                    }
-                    /*return SizedBox(
-                      child: LinearProgressIndicator(),
-                      height: 5.0,
-                      width: 5.0,
-                    );*/
-                    return Text("Loading...");
+                  value:selectedItem,
+                  dropdownColor: Colors.black87,
+                  selectedItemBuilder: (BuildContext context) {
+                    return snakepagelist.map<Widget>((String item) {
+                      return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0,vertical: 8),
+                          child:Center(child:Text(item,style:TextStyle(color: Colors.white, fontWeight: FontWeight.bold,fontSize: 24))));
+                    }).toList();
                   },
+                  isExpanded: true,
+                  iconSize: 36,
+                  icon: Icon(Icons.arrow_drop_down, color:Colors.amber),
+                  items: snakepagelist.map((String item) {
+                    return DropdownMenuItem<String>(
 
+                        value:item,child: Text(item,style:
+                      TextStyle(color: Colors.amber, fontWeight: FontWeight.bold,height: .4),
+
+                    ),
+
+                    );
+                  }).toList(),
+                onChanged: (String? value)=> setState(()=>
+                selectedItem=value!
                 ),
-
-              ),
+                ))),
+              SnakeCont(dbtabname: selectedItem, searchname: _searchText)
+              ]))
+              ,
+              TabPage(dbtabname: "Lizards", searchname: _searchText),
+              TabPage(dbtabname: "Turtles", searchname: _searchText),
+              TabPage(dbtabname: "Feeders", searchname: _searchText),
+              TabPage(dbtabname: "Other Animals", searchname: _searchText),
               Container(//Other Animals
-
                 padding: EdgeInsets.all(10.0),
                 child: FutureBuilder(
                   future: getImages3("Accessories",_searchText),
@@ -1786,7 +2329,7 @@ class _CollectionsPage extends State<CollectionsPage>{
                                 children: [
                                   ListTile(
                                     leading: Icon(Icons.bolt,color: Colors.amber,),
-                                    title: Text("Name: "+(a as Map)["visibleName"],style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold)),
+                                    title: Text("Name: "+ReCase((a as Map)["visibleName"]).titleCase,style: TextStyle(color: Colors.amber,fontWeight: FontWeight.bold)),
                                     subtitle: Text(
                                       "Type: "+(a as Map)["type"],
                                       style: TextStyle(color: Colors.white,fontWeight: FontWeight.bold),
@@ -1913,6 +2456,16 @@ class _CollectionsPage extends State<CollectionsPage>{
 
   }
 
+}
+
+class Animalcard {
+  final String name;
+  final String url;
+  final String desc;
+  final String type;
+  final String colour;
+
+  const Animalcard({required this.desc, required this.type, required this.colour, required this.name, required this.url,});
 }
 
 

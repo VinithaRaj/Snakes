@@ -15,6 +15,7 @@ class FirebaseApi {
         .map((index, url) {
       final ref = result.items[index];
       final name = ref.name;
+      //final title = ref.title;
       final file = FirebaseFile(ref: ref, name: name, url: url);
 
       return MapEntry(index, file);
