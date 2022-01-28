@@ -49,7 +49,7 @@ class MyApp extends StatelessWidget {
         statusBarColor: Colors.amber
     ));
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'KYJ Exotics',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         //primarySwatch: Colors.amber,
