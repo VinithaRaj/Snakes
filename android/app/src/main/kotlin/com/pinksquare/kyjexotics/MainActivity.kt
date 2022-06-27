@@ -1,4 +1,4 @@
-package com.example.flutter_app_fbexample
+package com.pinksquare.kyjexotics
 
 import io.flutter.embedding.android.FlutterActivity
 
